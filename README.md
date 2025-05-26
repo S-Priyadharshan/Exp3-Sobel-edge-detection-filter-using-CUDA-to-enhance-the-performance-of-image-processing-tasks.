@@ -36,7 +36,153 @@ Compare the output of your CUDA Sobel filter with a CPU-based Sobel filter imple
 Discuss the differences in execution time and output quality.
 
 ## PROGRAM:
-TYPE YOUR CODE HERE
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <cuda_runtime.h>
+#include <opencv2/opencv.hpp>
+#include <opencv2/imgproc.hpp>
+#include <chrono>
+
+using namespace cv;
+
+__global__ void sobelFilter(unsigned char *srcImage, unsigned char *dstImage,  
+                            unsigned int width, unsigned int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x; // column
+    int y = blockIdx.y * blockDim.y + threadIdx.y; // row
+
+    if (x > 0 && x < width - 1 && y > 0 && y < height - 1) {
+        int idx = y * width + x;
+
+        int gx = srcImage[y * width + (x + 1)] - srcImage[y * width + (x - 1)];
+        int gy = srcImage[(y + 1) * width + x] - srcImage[(y - 1) * width + x];
+
+        int mag = abs(gx) + abs(gy);
+        mag = min(mag, 255);
+
+        dstImage[idx] = (unsigned char)mag;
+    }
+}
+
+void checkCudaErrors(cudaError_t r) {
+    if (r != cudaSuccess) {
+        fprintf(stderr, "CUDA Error: %s\n", cudaGetErrorString(r));
+        exit(EXIT_FAILURE);
+    }
+}
+
+void analyzePerformance(const std::vector<std::pair<int, int>>& sizes, 
+                        const std::vector<int>& blockSizes, unsigned char *d_inputImage, 
+                        unsigned char *d_outputImage) {
+                        
+    for (auto size : sizes) {
+        int width = size.first;
+        int height = size.second;
+
+        printf("CUDA - Size: %dx%d\n", width, height);
+        
+        dim3 gridSize(ceil(width / 16.0), ceil(height / 16.0));
+        for (auto blockSize : blockSizes) {
+            dim3 blockDim(blockSize, blockSize);
+            cudaEvent_t start, stop;
+            cudaEventCreate(&start);
+            cudaEventCreate(&stop);
+
+            cudaEventRecord(start);
+            sobelFilter<<<gridSize, blockDim>>>(d_inputImage, d_outputImage, width, height);
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+
+            float milliseconds = 0;
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            printf("    Block Size: %dx%d Time: %f ms\n", blockSize, blockSize, milliseconds);
+
+            cudaEventDestroy(start);
+            cudaEventDestroy(stop);
+        }
+    }
+}
+
+int main() {
+    Mat image = imread("/content/images.jpg", IMREAD_COLOR);
+    if (image.empty()) {
+        printf("Error: Image not found.\n");
+        return -1;
+    }
+
+    // Convert to grayscale
+    Mat grayImage;
+    cvtColor(image, grayImage, COLOR_BGR2GRAY);
+
+    int width = grayImage.cols;
+    int height = grayImage.rows;
+    size_t imageSize = width * height * sizeof(unsigned char);
+
+    unsigned char *h_outputImage = (unsigned char *)malloc(imageSize);
+    if (h_outputImage == nullptr) {
+        fprintf(stderr, "Failed to allocate host memory\n");
+        return -1;
+    }
+
+    unsigned char *d_inputImage, *d_outputImage;
+    checkCudaErrors(cudaMalloc(&d_inputImage, imageSize));
+    checkCudaErrors(cudaMalloc(&d_outputImage, imageSize));
+    checkCudaErrors(cudaMemcpy(d_inputImage,grayImage.data,imageSize,cudaMemcpyHostToDevice));
+
+    // Performance analysis
+    std::vector<std::pair<int, int>> sizes = {{256, 256}, {512, 512}, {1024, 1024}};
+    std::vector<int> blockSizes = {8, 16, 32};
+
+    analyzePerformance(sizes, blockSizes, d_inputImage, d_outputImage);
+
+    // Execute CUDA Sobel filter one last time for the original image
+    dim3 gridSize(ceil(width / 16.0), ceil(height / 16.0));
+    dim3 blockDim(16, 16);
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
+    sobelFilter<<<gridSize, blockDim>>>(d_inputImage, d_outputImage, width, height);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    checkCudaErrors(cudaMemcpy(h_outputImage,d_outputImage,imageSize,cudaMemcpyDeviceToHost));
+
+    // Output image
+    Mat outputImage(height, width, CV_8UC1, h_outputImage);
+    imwrite("output_sobel_cuda.jpeg", outputImage);
+
+    // OpenCV Sobel filter for comparison
+    Mat opencvOutput;
+    auto startCpu = std::chrono::high_resolution_clock::now();
+    cv::Sobel(grayImage, opencvOutput, CV_8U, 1, 0, 3);
+    auto endCpu = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> cpuDuration = endCpu - startCpu;
+
+    // Save and display OpenCV output
+    imwrite("output_sobel_opencv.jpeg", opencvOutput);
+    
+    printf("Input Image Size: %d x %d\n", width, height);
+    printf("Output Image Size (CUDA): %d x %d\n", outputImage.cols, outputImage.rows);
+    printf("Total time taken (CUDA): %f ms\n", milliseconds);
+    printf("OpenCV Sobel Time: %f ms\n", cpuDuration.count());
+
+    // Cleanup
+    free(h_outputImage);
+    cudaFree(d_inputImage);
+    cudaFree(d_outputImage);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    return 0;
+}
+```
 
 ## OUTPUT:
 SHOW YOUR OUTPUT HERE
