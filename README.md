@@ -185,10 +185,10 @@ int main() {
 ```
 
 ## OUTPUT:
-SHOW YOUR OUTPUT HERE
+![image](https://github.com/user-attachments/assets/cf3aba99-0383-49e4-8b30-912485226427)
 
 ## RESULT:
-Thus the program has been executed by using CUDA to ________________.
+Thus the program has been executed by using CUDA to perform edge detection using Sobel operator simulation.
 
 Questions:
 
